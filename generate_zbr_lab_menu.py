@@ -27,8 +27,12 @@ load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"), ov
 
 NOTION_API_KEY = os.environ["NOTION_API_KEY"]
 
-MARATHON_DB_ID = "424b3046-c44a-4ea4-84b4-1fa062a904e4"
-TEAM_MD_DB_ID  = "1ac07bda-38ec-8037-be15-000bf8fc15a7"
+# データベースID（ページID）。data_source_id とは別物なので注意。
+MARATHON_DB_ID = "85c3760829894c409c7ea68311ae0892"
+TEAM_MD_DB_ID  = "1ac07bda38ec806989bdd5ac1f63b896"
+
+# チームMDの「場所」プロパティ名は先頭がノーブレークスペース(U+00A0)
+MD_PLACE_PROP = " 場所"
 
 NOTION_HEADERS = {
     "Authorization": f"Bearer {NOTION_API_KEY}",
@@ -245,10 +249,14 @@ def hs_blocks(is_practice_day: bool = False) -> list:
 
 
 # ── プロパティ組み立て ──────────────────────────────────────────────────
-def _str_array(values: list) -> dict:
-    """Notionのrich_textプロパティに配列文字列として格納"""
-    content = json.dumps(values, ensure_ascii=False)
-    return {"rich_text": [{"type": "text", "text": {"content": content}}]}
+def _multi_select(values: list) -> dict:
+    """multi_selectプロパティ"""
+    return {"multi_select": [{"name": v} for v in values]}
+
+
+def _select(value: str) -> dict:
+    """selectプロパティ"""
+    return {"select": {"name": value}}
 
 
 def _venue_and_coach(is_practice_day: bool):
@@ -273,10 +281,10 @@ def create_notion_page(
     properties = {
         title_prop: {"title": [{"type": "text", "text": {"content": title}}]},
         "開催日": {"date": {"start": date_str}},
-        "トレーニング効果": _str_array(training_effect),
-        place_prop: _str_array(venue),
-        "担当コーチ": _str_array(coach),
-        "開催月": {"rich_text": [{"type": "text", "text": {"content": month_label}}]},
+        "トレーニング効果": _multi_select(training_effect),
+        place_prop: _multi_select(venue),
+        "担当コーチ": _multi_select(coach),
+        "開催月": _select(month_label),
     }
 
     payload = {
@@ -338,21 +346,24 @@ def generate_monthly_menu(month: int, year: int, practice_days: dict):
         is_practice = (wd == 6 and d.day in sunday_practice)  # 日曜練習会
 
         menu_name = None
-        training_effect = []
+        marathon_effect = []   # マラソンチームDBのトレーニング効果（選択肢名が異なる）
+        md_effect = []         # チームMD DBのトレーニング効果
         marathon_blocks = None
         md_blocks = None
 
         if wd == 1:  # 火曜
             idx = _cycle4_index(d, CYCLE_ORIGIN_TUESDAY)
             menu_name = TUESDAY_CYCLE[idx]
-            training_effect = ["乳酸性作業閾値"]
+            marathon_effect = ["乳酸性作業閾値"]
+            md_effect = ["乳酸性作業閾値の改善"]
             marathon_blocks = lt_interval_blocks(menu_name)
             md_blocks = lt_interval_blocks(menu_name)
 
         elif wd == 3:  # 木曜
             idx = _cycle4_index(d, CYCLE_ORIGIN_TUESDAY)  # 同じ起点で週番号を算出
             menu_name = THURSDAY_CYCLE[idx]
-            training_effect = ["乳酸性作業閾値"]
+            marathon_effect = ["乳酸性作業閾値"]
+            md_effect = ["乳酸性作業閾値の改善"]
             marathon_blocks = lt_interval_blocks(menu_name)
             md_blocks = lt_interval_blocks(menu_name)
 
@@ -360,11 +371,13 @@ def generate_monthly_menu(month: int, year: int, practice_days: dict):
             idx = _cycle2_index(d, CYCLE_ORIGIN_SATURDAY)
             if idx == 0:
                 menu_name = "5kmタイムトライアル"
-                training_effect = ["測定"]
+                marathon_effect = ["VO2max"]
+                md_effect = ["VO2maxの改善"]
                 marathon_blocks = tt_5km_blocks()
                 md_blocks = tt_5km_blocks()
             else:
-                training_effect = ["有酸素持久力"]
+                marathon_effect = ["疲労耐性の改善"]
+                md_effect = ["疲労耐性の改善"]
                 # マラソンとMDで距離が異なる
                 marathon_blocks = bu_run_blocks("90~120分")
                 md_blocks = bu_run_blocks("60~90分")
@@ -372,7 +385,8 @@ def generate_monthly_menu(month: int, year: int, practice_days: dict):
 
         elif wd == 6:  # 日曜
             menu_name = "3×4×HS150m"
-            training_effect = ["ランニングエコノミー"]
+            marathon_effect = ["ランニングエコノミー"]
+            md_effect = ["ランニングエコノミーの改善"]
             marathon_blocks = hs_blocks(is_practice)
             md_blocks = hs_blocks(is_practice)
 
@@ -397,7 +411,7 @@ def generate_monthly_menu(month: int, year: int, practice_days: dict):
             title_prop="Name",
             title=marathon_title,
             date_str=date_str,
-            training_effect=training_effect,
+            training_effect=marathon_effect,
             venue=venue,
             coach=coach,
             month_label=month_label,
@@ -411,12 +425,12 @@ def generate_monthly_menu(month: int, year: int, practice_days: dict):
             title_prop="名前",
             title=md_title,
             date_str=date_str,
-            training_effect=training_effect,
+            training_effect=md_effect,
             venue=venue,
             coach=coach,
             month_label=month_label,
             blocks=md_blocks,
-            place_prop=" 場所",  # スペースあり
+            place_prop=MD_PLACE_PROP,  # 先頭はノーブレークスペース(U+00A0)
         )
 
         created.append({"date": date_str, "menu": marathon_title, "marathon": url_m, "md": url_md})
@@ -448,12 +462,29 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="ZBR Lab 月次練習メニュー生成")
     parser.add_argument("--month", type=int, help="対象月 (1-12)。省略時は翌月")
     parser.add_argument("--year",  type=int, help="対象年。省略時は翌月の年")
+    parser.add_argument(
+        "--practice-days", type=str,
+        help="練習会開催日（日曜）の日付をカンマ区切りで指定。省略時は第2・第4日曜を自動計算。例: 5,26",
+    )
     args = parser.parse_args()
 
     if args.month and args.year:
         year, month = args.year, args.month
     else:
         year, month = next_month(date.today())
+
+    if args.practice_days:
+        sunday_2nd, sunday_4th = [int(x.strip()) for x in args.practice_days.split(",")]
+        practice_days = {"sunday": [sunday_2nd, sunday_4th]}
+        log.info(f"=== ZBR Lab 練習プラン {year}年{month}月 生成開始 ===")
+        log.info(f"    練習会開催日（日曜・指定）: {month}/{sunday_2nd}, {month}/{sunday_4th}")
+        results = generate_monthly_menu(month, year, practice_days)
+        log.info(f"=== 完了: {len(results)}件作成 ===")
+        for r in results:
+            log.info(f"  {r['date']} {r['menu']}")
+            log.info(f"    マラソン: {r['marathon']}")
+            log.info(f"    チームMD: {r['md']}")
+        sys.exit(0)
 
     # 練習会開催日: 毎月第2・第4日曜
     sunday_2nd = nth_weekday_of_month(year, month, weekday=6, n=2)
