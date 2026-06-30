@@ -143,14 +143,18 @@ def _bullet(text: str, url: str = None) -> dict:
     }
 
 
-def _warmup_children() -> list:
-    return [
+def _warmup_children(minimal: bool = False) -> list:
+    children = [
         _bullet("ウォークドリル", URL_WALK_DRILL),
         _bullet("ステップドリル", URL_STEP_DRILL),
-        _bullet("15分ジョグ（ゆっくりペースから少しずつペースアップ）"),
-        _bullet("100m流し（ダッシュ）を4本（1本ずつ段階的にペースを上げる、最後はほぼ全力）"),
-        _bullet("5分呼吸を整える"),
     ]
+    if not minimal:
+        children += [
+            _bullet("15分ジョグ（ゆっくりペースから少しずつペースアップ）"),
+            _bullet("100m流し（ダッシュ）を4本（1本ずつ段階的にペースを上げる、最後はほぼ全力）"),
+            _bullet("5分呼吸を整える"),
+        ]
+    return children
 
 
 def _standard_blocks(
@@ -159,13 +163,17 @@ def _standard_blocks(
     purpose_lines: list,
     notes_lines: list,
     is_practice_day: bool = False,
+    minimal_warmup: bool = False,
+    include_review: bool = True,
 ) -> list:
     """
     共通ブロック構成:
     目次 → 1.メニュー → 2.目的 → 3.注意事項
-    practice_day=True の場合は 4.練習会について, 5.振り返り を追加
+    practice_day=True の場合は 4.練習会について を追加
+    （include_review=True かつ practice_day=True なら 5.振り返り も追加）
+    minimal_warmup=True の場合、ウォームアップはドリル2種のみ
     """
-    wu = _numbered("ウォーミングアップ", _warmup_children())
+    wu = _numbered("ウォーミングアップ", _warmup_children(minimal=minimal_warmup))
     intensity_block = _numbered(f"トレーニング強度\n- {intensity_detail}")
     main = _numbered(f"本練習：{menu_name}", [intensity_block])
     cd = _numbered("クーリングダウン", [_bullet("10分ゆっくりジョグ")])
@@ -187,12 +195,15 @@ def _standard_blocks(
             _bullet("Google Map", URL_MAP),
             _bullet("8:50集合 / 9:00 WS / 9:50 ラン / 11:30終了"),
             _bullet("緊急連絡: 090-6527-9438（高岡携帯）"),
-            _h1_blue("5. 練習会振り返り"),
-            _bullet("今日の調子（5段階）:"),
-            _bullet("メインメニューのペース・感触:"),
-            _bullet("気づいたこと・課題:"),
-            _bullet("次回への申し送り:"),
         ]
+        if include_review:
+            blocks += [
+                _h1_blue("5. 練習会振り返り"),
+                _bullet("今日の調子（5段階）:"),
+                _bullet("メインメニューのペース・感触:"),
+                _bullet("気づいたこと・課題:"),
+                _bullet("次回への申し送り:"),
+            ]
 
     return blocks
 
@@ -230,12 +241,14 @@ def bu_run_blocks(duration: str, is_practice_day: bool = False) -> list:
         "ペースアップは急激に行わず、2〜3分ごとに少しずつ上げる",
         "終盤がきつくても「フォームを崩さない」ことを意識する",
     ]
-    return _standard_blocks(menu_name, intensity, purpose, notes, is_practice_day)
+    return _standard_blocks(
+        menu_name, intensity, purpose, notes, is_practice_day, minimal_warmup=True
+    )
 
 
 def hs_blocks(is_practice_day: bool = False) -> list:
     menu_name = "3×4×HS150m"
-    intensity = "1セット目は80%、2セット目は90%、3セット目は100%の強度。インターバル（150m間）は歩いて完全回復。セット間は5分以上"
+    intensity = "1セット目は80%、2セット目は90%、3セット目は100%の強度。インターバル（150m間）はゆっくりジョグまたは歩きで呼吸を回復させる。セット間は3分"
     purpose = [
         "ランニングエコノミーの向上（神経筋系の活性化）",
         "速いペースでの正しいフォームを体に覚えさせる",
@@ -245,7 +258,9 @@ def hs_blocks(is_practice_day: bool = False) -> list:
         "接地時間を短く。ピッチ（回転数）より一歩一歩のパワーを重視",
         "疲れてきたらフォームが崩れるサイン。崩れたらそのセットは終了してよい",
     ]
-    return _standard_blocks(menu_name, intensity, purpose, notes, is_practice_day)
+    return _standard_blocks(
+        menu_name, intensity, purpose, notes, is_practice_day, include_review=False
+    )
 
 
 # ── プロパティ組み立て ──────────────────────────────────────────────────
@@ -395,13 +410,20 @@ def generate_monthly_menu(month: int, year: int, practice_days: dict):
             continue
 
         venue, coach = _venue_and_coach(is_practice)
-        # タイトルを正確に設定
+
+        # メニュー名部分（BUのみDB別に距離が異なる）
         if wd == 5 and idx != 0:
-            marathon_title = "90~120分BU（ビルドアップ走）"
-            md_title       = "60~90分BU（ビルドアップ走）"
+            marathon_menu = "90~120分BU"
+            md_menu       = "60~90分BU"
         else:
-            marathon_title = menu_name
-            md_title       = menu_name
+            marathon_menu = menu_name
+            md_menu       = menu_name
+
+        # タイトル: {M}/{D}【{曜日}練】{メニュー名}
+        weekday_label = {1: "火", 3: "木", 5: "土", 6: "日"}[wd]
+        date_prefix = f"{d.month}/{d.day}【{weekday_label}曜練】"
+        marathon_title = f"{date_prefix}{marathon_menu}"
+        md_title       = f"{date_prefix}{md_menu}"
 
         log.info(f"  作成中: {date_str} ({['月','火','水','木','金','土','日'][wd]}) {marathon_title}")
 
